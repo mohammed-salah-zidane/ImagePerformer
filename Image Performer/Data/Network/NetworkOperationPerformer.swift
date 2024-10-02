@@ -7,15 +7,19 @@
 
 import Foundation
 
+/// A class responsible for performing network operations with network availability checks and timeout handling.
 class NetworkOperationPerformer: NetworkOperationPerformerProtocol {
     private let networkMonitor: NetworkMonitorProtocol
-    
+
+    /// Initializes a new instance of `NetworkOperationPerformer`.
+    ///
+    /// - Parameter networkMonitor: The network monitor to use for checking network connectivity.
     init(networkMonitor: NetworkMonitorProtocol = NetworkMonitor()) {
         self.networkMonitor = networkMonitor
     }
-    
-    /// Attempts to perform a network operation using the given `operation`, within the given `timeoutDuration`.
-    /// If the network is not accessible within the given `timeoutDuration`, the operation is not performed.
+
+    /// Attempts to perform a network operation within the given timeout duration.
+    /// If the network is not accessible within the timeout, the operation is not performed.
     ///
     /// - Parameters:
     ///   - timeoutDuration: The timeout duration in seconds.
@@ -29,13 +33,13 @@ class NetworkOperationPerformer: NetworkOperationPerformerProtocol {
         if Task.isCancelled {
             throw CancellationError()
         }
-        
+
         if networkMonitor.isConnected {
             return try await operation()
         }
-        
+
         let isConnected = await networkMonitor.waitForConnection(timeout: timeoutDuration)
-        
+
         if isConnected {
             if Task.isCancelled {
                 throw CancellationError()
