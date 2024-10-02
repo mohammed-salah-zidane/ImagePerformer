@@ -26,8 +26,7 @@ A SwiftUI-based application demonstrating image loading with network connectivit
 - [Running the Project](#running-the-project)
 - [Conclusion](#conclusion)
 - [License](#license)
-- [Acknowledgments](#acknowledgments)
-
+  
 ---
 
 ## Overview
@@ -86,8 +85,8 @@ Image Performer/
 │       ├── NetworkMonitorProtocol.swift
 │       └── NetworkOperationPerformerProtocol.swift
 ├── Data/
-│   ├── Repositories/
-│   │   └── ImageRepository.swift
+    ├── Repositories/
+    │   └── ImageRepository.swift
     └── Network/
         ├── NetworkMonitor.swift
         └── NetworkOperationPerformer.swift
@@ -600,7 +599,7 @@ enum LoadingState: Equatable {
 1. **Prerequisites**:
    - **Xcode 16** or later.
    - **Swift 6**.
-   - **iOS 16** or later as the deployment target.
+   - **iOS 17** or later as the deployment target.
 
 2. **Setup**:
    - Clone or download the repository.
