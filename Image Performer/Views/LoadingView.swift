@@ -18,9 +18,17 @@ struct LoadingView: View {
             if showNoNetworkText {
                 Text("No network connection.")
                     .padding(.top, 8)
+                    .foregroundColor(
+                        colorScheme == .dark ? Color.white : Color.black
+                    )
+
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(colorScheme == .dark ? Color.black : Color.white)
     }
+}
+
+#Preview {
+    LoadingView(showNoNetworkText: true)
 }

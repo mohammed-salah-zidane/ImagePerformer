@@ -36,7 +36,7 @@ class ImageLoaderViewModel: ViewModelProtocol {
 
         // After half a second, check network status
         Task {
-            try? await Task.sleep(nanoseconds: 100000_000_000) // 0.5 seconds
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
             let isConnected = networkMonitor.isConnected
             if !isConnected {
                 if case .loading = self.state {
