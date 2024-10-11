@@ -43,7 +43,7 @@ This project demonstrates clean code practices, adherence to SOLID principles, t
 - **Network Connectivity Check**: If the internet is not accessible within 0.5 seconds, displays a "No network connection" message.
 - **Image Download with Timeout**: Performs an image download operation with a 2-second timeout.
 - **Result Handling**: Displays the downloaded image upon success or an error message upon failure.
-- **Modern Swift Features**: Utilizes `@Observable`, `@Observation`, and other modern Swift features.
+- **Modern Swift Features**: Utilizes Swift's concurrency (`async/await`), actors, and property wrappers.
 - **Clean Architecture**: Follows a clean architecture with separation of concerns.
 - **Testable and Modular**: The code is structured to be fully testable and modular.
 
@@ -132,11 +132,15 @@ A SwiftUI view that displays different content based on the image loading state 
 
 ```swift
 import SwiftUI
-import Observation
 
-struct ImageLoaderView<ViewModel: ViewModelProtocol>: View {
-    private var viewModel: ViewModel
+/// A view that displays different content based on the image loading state.
+struct ImageLoaderView<ViewModel: ViewModelProtocol & ObservableObject>: View {
+    // The observed view model managing the image loading state.
+    @ObservedObject private var viewModel: ViewModel
 
+    /// Initializes a new instance of `ImageLoaderView`.
+    ///
+    /// - Parameter viewModel: The view model managing the image loading state.
     init(viewModel: ViewModel) {
         self.viewModel = viewModel
     }
@@ -145,21 +149,26 @@ struct ImageLoaderView<ViewModel: ViewModelProtocol>: View {
         Group {
             switch viewModel.state {
             case .idle:
+                // Display a clear color when idle.
                 Color.clear
-                    .onAppear {
-                        viewModel.start()
-                    }
             case .loading(let showNoNetworkText):
+                // Display the loading view, passing the flag for showing the "No network connection" message.
                 LoadingView(showNoNetworkText: showNoNetworkText)
             case .success(let image):
+                // Display the loaded image.
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFit()
             case .failure(let message):
+                // Display the failure message.
                 Text(message)
             }
         }
         .edgesIgnoringSafeArea(.all)
+        .onAppear {
+            // Start the image loading process when the view appears.
+            viewModel.start()
+        }
     }
 }
 ```
@@ -175,14 +184,16 @@ An observable class responsible for managing the state of the image loading proc
 ```swift
 import Foundation
 import UIKit
-import Observation
+import Combine
 
 /// The view model responsible for managing the state of the image loading process.
-@Observable
-class ImageLoaderViewModel: ViewModelProtocol {
-    private(set) var state: LoadingState = .idle
+class ImageLoaderViewModel: ViewModelProtocol, ObservableObject {
+    /// The current state of the image loading process.
+    @Published private(set) var state: LoadingState = .idle
 
+    // The use case for fetching the image.
     private let fetchImageUseCase: FetchImageUseCaseProtocol
+    // The network monitor for checking connectivity.
     private let networkMonitor: NetworkMonitorProtocol
 
     /// Initializes a new instance of `ImageLoaderViewModel`.
@@ -200,27 +211,37 @@ class ImageLoaderViewModel: ViewModelProtocol {
 
     /// Starts the image loading process.
     func start() {
-        state = .loading(showNoNetworkText: false)
+        // Set the initial state to loading without the "No network connection" message.
+        DispatchQueue.main.async {
+            self.state = .loading(showNoNetworkText: false)
+        }
 
-        // After half a second, check network status
+        // After half a second, check network status.
         Task {
             try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-            let isConnected = networkMonitor.isConnected
+            let isConnected = await networkMonitor.isConnected
             if !isConnected {
                 if case .loading = self.state {
-                    self.state = .loading(showNoNetworkText: true)
+                    DispatchQueue.main.async {
+                        // Update the state to show the "No network connection" message.
+                        self.state = .loading(showNoNetworkText: true)
+                    }
                 }
             }
         }
 
-        // Start image loading
+        // Start the image loading task.
         Task {
             let result = await fetchImageUseCase.execute()
-            switch result {
-            case .success(let image):
-                self.state = .success(image: image)
-            case .failure:
-                self.state = .failure(message: "Download failed.")
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let image):
+                    // Update the state to success with the loaded image.
+                    self.state = .success(image: image)
+                case .failure:
+                    // Update the state to failure with an error message.
+                    self.state = .failure(message: "Download failed.")
+                }
             }
         }
     }
@@ -240,7 +261,9 @@ import Foundation
 
 /// A builder class for creating instances of `ImageLoaderViewModel`.
 class ImageLoaderViewModelBuilder {
+    // The URL of the image to load.
     private var imageURL: URL?
+    // A custom network monitor, if any.
     private var networkMonitor: NetworkMonitorProtocol?
 
     /// Sets the image URL for the view model.
@@ -266,13 +289,18 @@ class ImageLoaderViewModelBuilder {
     /// - Returns: An optional `ImageLoaderViewModel` instance.
     @MainActor func build() -> ImageLoaderViewModel? {
         guard let imageURL = imageURL else { return nil }
+        // Create the image repository with the provided URL.
         let imageRepository = ImageRepository(imageURL: imageURL)
+        // Use the provided network monitor or create a default one.
         let networkMonitor = self.networkMonitor ?? NetworkMonitor()
+        // Create the network operation performer with the network monitor.
         let networkOperationPerformer = NetworkOperationPerformer(networkMonitor: networkMonitor)
+        // Create the fetch image use case with the repository and operation performer.
         let fetchImageUseCase = FetchImageUseCase(
             imageRepository: imageRepository,
             networkOperationPerformer: networkOperationPerformer
         )
+        // Build and return the ImageLoaderViewModel.
         return ImageLoaderViewModel(
             fetchImageUseCase: fetchImageUseCase,
             networkMonitor: networkMonitor
@@ -315,23 +343,14 @@ class FetchImageUseCase: FetchImageUseCaseProtocol {
     ///
     /// - Returns: A `Result` containing the fetched `UIImage` or an `Error`.
     func execute() async -> Result<UIImage, Error> {
-        do {
-            let image = try await networkOperationPerformer.perform(withinSeconds: 2) { [weak self] in
-                guard let self = self else {
-                    throw URLError(.cancelled)
-                }
-                return try await self.imageRepository.fetchImage()
+        let result = await networkOperationPerformer.perform(withinSeconds: 2) { [weak self] in
+            guard let self = self else {
+                throw URLError(.cancelled)
             }
-
-            guard let loadedImage = image else {
-                return .failure(URLError(.timedOut))
-            }
-
-            return .success(loadedImage)
-
-        } catch {
-            return .failure(error)
+            return try await self.imageRepository.fetchImage()
         }
+
+        return result
     }
 }
 ```
@@ -350,7 +369,9 @@ import UIKit
 
 /// A repository responsible for fetching images from a specified URL.
 class ImageRepository: ImageRepositoryProtocol {
+    // The URL of the image to fetch.
     private let imageURL: URL
+    // A static cache to store fetched images.
     private static let cache = NSCache<NSURL, UIImage>()
 
     /// Initializes a new instance of `ImageRepository`.
@@ -365,15 +386,19 @@ class ImageRepository: ImageRepositoryProtocol {
     /// - Returns: The fetched `UIImage`.
     /// - Throws: An error if the image cannot be fetched or decoded.
     func fetchImage() async throws -> UIImage {
+        // Check if the image is already in the cache.
         if let cachedImage = Self.cache.object(forKey: imageURL as NSURL) {
             return cachedImage
         }
 
+        // Fetch the image data from the URL.
         let (data, _) = try await URLSession.shared.data(from: imageURL)
+        // Attempt to create a UIImage from the data.
         guard let image = UIImage(data: data) else {
             throw URLError(.badServerResponse)
         }
 
+        // Store the image in the cache.
         Self.cache.setObject(image, forKey: imageURL as NSURL)
         return image
     }
@@ -408,29 +433,38 @@ class NetworkOperationPerformer: NetworkOperationPerformerProtocol {
     /// - Parameters:
     ///   - timeoutDuration: The timeout duration in seconds.
     ///   - operation: The network operation to perform.
-    /// - Returns: The result of the network operation, or `nil` if the network was not accessible within the timeout.
-    /// - Throws: An error if the operation throws or if the task is cancelled.
+    /// - Returns: A `Result` containing the result of the network operation or an error.
     func perform<T>(
         withinSeconds timeoutDuration: TimeInterval,
         operation: @escaping () async throws -> T
-    ) async throws -> T? {
+    ) async -> Result<T, Error> {
         if Task.isCancelled {
-            throw CancellationError()
+            return .failure(CancellationError())
         }
 
         if networkMonitor.isConnected {
-            return try await operation()
+            do {
+                let result = try await operation()
+                return .success(result)
+            } catch {
+                return .failure(error)
+            }
         }
 
         let isConnected = await networkMonitor.waitForConnection(timeout: timeoutDuration)
 
         if isConnected {
             if Task.isCancelled {
-                throw CancellationError()
+                return .failure(CancellationError())
             }
-            return try await operation()
+            do {
+                let result = try await operation()
+                return .success(result)
+            } catch {
+                return .failure(error)
+            }
         } else {
-            return nil
+            return .failure(URLError(.timedOut))
         }
     }
 }
@@ -449,15 +483,22 @@ import Foundation
 import Network
 
 /// An actor that monitors network connectivity status.
+/// It allows multiple concurrent calls to `waitForConnection(timeout:)`
+/// and resumes all waiting tasks when the network status changes.
 actor NetworkMonitor: NetworkMonitorProtocol {
     private let monitor: NWPathMonitor
-    private var continuation: CheckedContinuation<Bool, Never>?
-    private var isResolved = false
+    private var continuations: [CheckedContinuation<Bool, Never>] = []
 
     /// Initializes a new instance of `NetworkMonitor` and starts monitoring.
     init() {
         self.monitor = NWPathMonitor()
         self.monitor.start(queue: DispatchQueue.global(qos: .background))
+        // Set up a single path update handler for all waiting tasks.
+        self.monitor.pathUpdateHandler = { [weak self] path in
+            Task {
+                await self?.handlePathUpdate(status: path.status)
+            }
+        }
     }
 
     /// A nonisolated computed property indicating whether the network is currently connected.
@@ -467,24 +508,23 @@ actor NetworkMonitor: NetworkMonitorProtocol {
 
     /// Waits for the network to become accessible within the specified timeout.
     ///
+    /// This method allows multiple concurrent calls. Each call will wait until
+    /// the network becomes accessible or the timeout expires.
+    ///
     /// - Parameter timeout: The maximum time to wait for network connectivity, in seconds.
     /// - Returns: `true` if the network became accessible within the timeout; otherwise, `false`.
     func waitForConnection(timeout: TimeInterval) async -> Bool {
         if isConnected {
+            // Network is already connected; no need to wait.
             return true
         }
 
-        isResolved = false
-
         return await withCheckedContinuation { continuation in
-            self.continuation = continuation
+            // Add the continuation to the array of waiting tasks.
+            self.continuations.append(continuation)
 
-            monitor.pathUpdateHandler = { [weak self] path in
-                Task {
-                    await self?.handlePathUpdate(status: path.status)
-                }
-            }
-
+            // Start a timeout task to handle the case where the network
+            // does not become available within the specified duration.
             Task {
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                 await self.handleTimeout()
@@ -492,29 +532,38 @@ actor NetworkMonitor: NetworkMonitorProtocol {
         }
     }
 
-    /// Handles network path updates and resumes the continuation if the network becomes accessible.
+    /// Handles network path updates and resumes all waiting continuations if the network becomes accessible.
     ///
     /// - Parameter status: The current network path status.
     private func handlePathUpdate(status: NWPath.Status) async {
-        if status == .satisfied && !isResolved {
-            isResolved = true
-            continuation?.resume(returning: true)
-            continuation = nil
-            monitor.pathUpdateHandler = nil
+        if status == .satisfied {
+            // Network is now connected.
+            // Resume all waiting continuations with `true`.
+            // It's important to remove continuations after resuming them
+            // to prevent resuming them multiple times and to free up resources.
+            while !continuations.isEmpty {
+                let continuation = continuations.removeFirst()
+                continuation.resume(returning: true)
+            }
         }
+        // If the status is not satisfied, we do nothing and wait for either
+        // the network to become available or the timeout to occur.
     }
 
-    /// Handles timeout by resuming the continuation if the network did not become accessible within the timeout.
+    /// Handles timeout by resuming all waiting continuations with `false` if the network did not become accessible in time.
     private func handleTimeout() async {
-        if !isResolved {
-            isResolved = true
-            continuation?.resume(returning: false)
-            continuation = nil
-            monitor.pathUpdateHandler = nil
+        // Network did not become available within the timeout duration.
+        // Resume all waiting continuations with `false`.
+        // Again, we remove continuations after resuming them to prevent
+        // resuming them multiple times and to free up resources.
+        while !continuations.isEmpty {
+            let continuation = continuations.removeFirst()
+            continuation.resume(returning: false)
         }
     }
 
     deinit {
+        // Clean up by cancelling the network monitor when the actor is deallocated.
         monitor.cancel()
     }
 }
@@ -533,15 +582,22 @@ import SwiftUI
 
 /// A view that displays a loading indicator and an optional "No network connection" message.
 struct LoadingView: View {
+    // A flag indicating whether to show the "No network connection" message.
     let showNoNetworkText: Bool
+    // Access to the current color scheme (light or dark mode).
     @Environment(\.colorScheme) var colorScheme
 
     var body: some View {
         VStack {
+            // Display a progress indicator.
             ProgressView()
             if showNoNetworkText {
+                // If the flag is set, display the "No network connection." message.
                 Text("No network connection.")
                     .padding(.top, 8)
+                    .foregroundColor(
+                        colorScheme == .dark ? Color.white : Color.black
+                    )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -607,7 +663,7 @@ enum LoadingState: Equatable {
    - Replace the image URL in `MainApp.swift` with a valid image URL:
 
      ```swift
-     .setImageURL(URL(string: "https://example.com/image.png")!)
+     .setImageURL(URL(string: "https://example.com/image.png")!) // Use a valid image URL
      ```
 
 3. **Build and Run**:
