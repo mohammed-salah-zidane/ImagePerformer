@@ -10,7 +10,9 @@ import UIKit
 
 /// A use case responsible for fetching an image using the repository and network operation performer.
 class FetchImageUseCase: FetchImageUseCaseProtocol {
+    // The image repository used to fetch the image.
     private let imageRepository: ImageRepositoryProtocol
+    // The network operation performer used to handle network checks and timeouts.
     private let networkOperationPerformer: NetworkOperationPerformerProtocol
 
     /// Initializes a new instance of `FetchImageUseCase`.
@@ -30,22 +32,15 @@ class FetchImageUseCase: FetchImageUseCaseProtocol {
     ///
     /// - Returns: A `Result` containing the fetched `UIImage` or an `Error`.
     func execute() async -> Result<UIImage, Error> {
-        do {
-            let image = try await networkOperationPerformer.perform(withinSeconds: 2) { [weak self] in
-                guard let self = self else {
-                    throw URLError(.cancelled)
-                }
-                return try await self.imageRepository.fetchImage()
+        // Use the network operation performer to attempt fetching the image within 2 seconds.
+        let result = await networkOperationPerformer.perform(withinSeconds: 2) { [weak self] in
+            guard let self = self else {
+                throw URLError(.cancelled)
             }
-
-            guard let loadedImage = image else {
-                return .failure(URLError(.timedOut))
-            }
-
-            return .success(loadedImage)
-
-        } catch {
-            return .failure(error)
+            // Fetch the image from the repository.
+            return try await self.imageRepository.fetchImage()
         }
+
+        return result
     }
 }

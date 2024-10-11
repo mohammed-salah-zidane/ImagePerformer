@@ -9,7 +9,9 @@ import Foundation
 
 /// A builder class for creating instances of `ImageLoaderViewModel`.
 class ImageLoaderViewModelBuilder {
+    // The URL of the image to load.
     private var imageURL: URL?
+    // A custom network monitor, if any.
     private var networkMonitor: NetworkMonitorProtocol?
 
     /// Sets the image URL for the view model.
@@ -35,13 +37,18 @@ class ImageLoaderViewModelBuilder {
     /// - Returns: An optional `ImageLoaderViewModel` instance.
     @MainActor func build() -> ImageLoaderViewModel? {
         guard let imageURL = imageURL else { return nil }
+        // Create the image repository with the provided URL.
         let imageRepository = ImageRepository(imageURL: imageURL)
+        // Use the provided network monitor or create a default one.
         let networkMonitor = self.networkMonitor ?? NetworkMonitor()
+        // Create the network operation performer with the network monitor.
         let networkOperationPerformer = NetworkOperationPerformer(networkMonitor: networkMonitor)
+        // Create the fetch image use case with the repository and operation performer.
         let fetchImageUseCase = FetchImageUseCase(
             imageRepository: imageRepository,
             networkOperationPerformer: networkOperationPerformer
         )
+        // Build and return the ImageLoaderViewModel.
         return ImageLoaderViewModel(
             fetchImageUseCase: fetchImageUseCase,
             networkMonitor: networkMonitor

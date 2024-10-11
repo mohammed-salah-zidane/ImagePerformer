@@ -9,6 +9,7 @@ import Foundation
 
 /// A class responsible for performing network operations with network availability checks and timeout handling.
 class NetworkOperationPerformer: NetworkOperationPerformerProtocol {
+    // The network monitor used to check network connectivity.
     private let networkMonitor: NetworkMonitorProtocol
 
     /// Initializes a new instance of `NetworkOperationPerformer`.
@@ -24,29 +25,43 @@ class NetworkOperationPerformer: NetworkOperationPerformerProtocol {
     /// - Parameters:
     ///   - timeoutDuration: The timeout duration in seconds.
     ///   - operation: The network operation to perform.
-    /// - Returns: The result of the network operation, or `nil` if the network was not accessible within the timeout.
-    /// - Throws: An error if the operation throws or if the task is cancelled.
+    /// - Returns: A `Result` containing the result of the network operation or an error.
     func perform<T>(
         withinSeconds timeoutDuration: TimeInterval,
         operation: @escaping () async throws -> T
-    ) async throws -> T? {
+    ) async -> Result<T, Error> {
         if Task.isCancelled {
-            throw CancellationError()
+            // If the task is cancelled before starting, return a cancellation error.
+            return .failure(CancellationError())
         }
 
         if networkMonitor.isConnected {
-            return try await operation()
+            // If the network is connected, attempt the operation immediately.
+            do {
+                let result = try await operation()
+                return .success(result)
+            } catch {
+                return .failure(error)
+            }
         }
 
+        // Wait for the network to become available within the timeout.
         let isConnected = await networkMonitor.waitForConnection(timeout: timeoutDuration)
 
         if isConnected {
             if Task.isCancelled {
-                throw CancellationError()
+                // Check for cancellation before proceeding.
+                return .failure(CancellationError())
             }
-            return try await operation()
+            do {
+                let result = try await operation()
+                return .success(result)
+            } catch {
+                return .failure(error)
+            }
         } else {
-            return nil
+            // If the network did not become available within the timeout, return a timeout error.
+            return .failure(URLError(.timedOut))
         }
     }
 }
